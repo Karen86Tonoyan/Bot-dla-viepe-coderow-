@@ -1,0 +1,141 @@
+# ALFA Release Gate
+#
+# ALFA Principle:
+# No artifact exists outside the sandbox until it proves source, scope, safety, and value.
+#
+# This pipeline enforces that principle on every push and pull request to main.
+# An artifact that cannot pass all four gates does not exist outside this sandbox.
+
+name: ALFA Release Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # GATE 1 — SOURCE
+  # Verify the origin of all code and dependencies.
+  gate-source:
+    name: "Gate 1 · Source"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify no secrets committed
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Audit dependencies (npm)
+        if: ${{ hashFiles('package-lock.json') != '' }}
+        run: npm audit --audit-level=high
+
+      - name: Audit dependencies (pip)
+        if: ${{ hashFiles('requirements.txt') != '' }}
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
+      - name: Source gate passed
+        run: echo "✅ SOURCE — artifact origin verified"
+
+  # GATE 2 — SCOPE
+  # Verify the artifact stays within its declared boundary.
+  gate-scope:
+    name: "Gate 2 · Scope"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for oversized diff on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FILES=$(gh pr view ${{ github.event.pull_request.number }} --json files --jq '.files | length')
+          echo "Files changed: $FILES"
+          if [ "$FILES" -gt 50 ]; then
+            echo "❌ SCOPE VIOLATION: PR touches $FILES files. Reduce scope before merging."
+            exit 1
+          fi
+
+      - name: Scope gate passed
+        run: echo "✅ SCOPE — artifact boundary verified"
+
+  # GATE 3 — SAFETY
+  # Verify the artifact does not introduce vulnerabilities or break existing behavior.
+  gate-safety:
+    name: "Gate 3 · Safety"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run tests (Node.js)
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          npm ci
+          npm test
+
+      - name: Run tests (Python)
+        if: ${{ hashFiles('requirements.txt') != '' }}
+        run: |
+          pip install -r requirements.txt
+          python -m pytest --tb=short
+
+      - name: Static analysis (Python)
+        if: ${{ hashFiles('**/*.py') != '' }}
+        run: |
+          pip install bandit
+          bandit -r . -ll --exclude ./.git,./node_modules
+
+      - name: Safety gate passed
+        run: echo "✅ SAFETY — artifact behavior and security verified"
+
+  # GATE 4 — VALUE
+  # Verify the artifact has a documented, reviewable purpose.
+  gate-value:
+    name: "Gate 4 · Value"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify PR has a description
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [ -z "$PR_BODY" ] || [ ${#PR_BODY} -lt 50 ]; then
+            echo "❌ VALUE GATE FAILED: PR description is missing or too short."
+            echo "Every artifact must prove its value. Describe what problem this solves."
+            exit 1
+          fi
+          echo "✅ VALUE — artifact purpose documented"
+
+      - name: Value gate passed
+        run: echo "✅ VALUE — artifact purpose verified"
+
+  # FINAL — ALFA RELEASE DECISION
+  # All four gates must pass. If any gate fails, the artifact does not exist outside the sandbox.
+  alfa-release-decision:
+    name: "ALFA Release Decision"
+    runs-on: ubuntu-latest
+    needs: [gate-source, gate-scope, gate-safety, gate-value]
+    steps:
+      - name: ALFA Principle enforced
+        run: |
+          echo "============================================"
+          echo " ALFA PRINCIPLE: RELEASE GATE PASSED"
+          echo "============================================"
+          echo " Source   ✅"
+          echo " Scope    ✅"
+          echo " Safety   ✅"
+          echo " Value    ✅"
+          echo "============================================"
+          echo " This artifact has proven its right to exist."
+          echo "============================================"

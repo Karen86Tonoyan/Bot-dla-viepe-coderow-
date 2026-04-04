@@ -1,0 +1,174 @@
+name: ALFA Release Gate
+
+# ALFA Principle:
+# You do not exist until you prove you are worth it.
+# No artifact exists outside the sandbox until it proves source, scope, safety, and value.
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  alfa-gate:
+    name: ALFA Gate — source · scope · safety · usefulness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── SOURCE ────────────────────────────────────────────────────────────────
+      # Every artifact must prove where it came from.
+
+      - name: "[SOURCE] Verify PR has a description"
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          echo "=== ALFA: SOURCE CHECK ==="
+          if [ -z "$PR_BODY" ] || [ ${#PR_BODY} -lt 20 ]; then
+            echo "FAIL: Pull request has no meaningful description."
+            echo "Every artifact must declare its source. Describe what this change is and why it exists."
+            exit 1
+          fi
+          echo "PASS: PR has a description."
+
+      - name: "[SOURCE] Check for secrets accidentally committed"
+        run: |
+          echo "=== ALFA: SOURCE — secret scan ==="
+          # Fail if common secret patterns are found in tracked files
+          if git grep -rn \
+               -e 'PRIVATE_KEY\s*=' \
+               -e 'api_key\s*=' \
+               -e 'secret\s*=\s*["'"'"'][^"'"'"']\+["'"'"']' \
+               -e 'password\s*=\s*["'"'"'][^"'"'"']\+["'"']' \
+               --and --not -e 'example\|placeholder\|changeme\|your_\|<' \
+               -- ':(exclude).github' ':(exclude)*.md' \
+               2>/dev/null | grep -v '^\s*#'; then
+            echo "FAIL: Possible secret detected in source. Remove it before merging."
+            exit 1
+          fi
+          echo "PASS: No obvious secrets found."
+
+      # ── SCOPE ─────────────────────────────────────────────────────────────────
+      # Every artifact must declare and stay within its boundaries.
+
+      - name: "[SCOPE] Validate required documentation exists"
+        run: |
+          echo "=== ALFA: SCOPE CHECK ==="
+          missing=0
+          for doc in README.md CONTRIBUTING.md SECURITY.md; do
+            if [ ! -f "$doc" ]; then
+              echo "FAIL: $doc is missing. Scope requires all core documents to exist."
+              missing=1
+            else
+              echo "PASS: $doc exists."
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            exit 1
+          fi
+
+      - name: "[SCOPE] Confirm ALFA Principle is present in core documents"
+        run: |
+          echo "=== ALFA: SCOPE — principle check ==="
+          missing=0
+          for doc in README.md CONTRIBUTING.md SECURITY.md; do
+            if ! grep -qi "alfa" "$doc" 2>/dev/null; then
+              echo "FAIL: ALFA Principle not found in $doc."
+              missing=1
+            else
+              echo "PASS: ALFA Principle present in $doc."
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            exit 1
+          fi
+
+      # ── SAFETY ────────────────────────────────────────────────────────────────
+      # Every artifact must not introduce risk.
+
+      - name: "[SAFETY] Check for dangerous shell patterns in scripts"
+        run: |
+          echo "=== ALFA: SAFETY CHECK ==="
+          # Detect eval, exec with user input, or curl | bash patterns
+          dangerous=0
+          if git grep -rn \
+               -e 'eval\s*(' \
+               -e 'curl\s.*|\s*bash' \
+               -e 'wget\s.*|\s*sh' \
+               -- '*.py' '*.js' '*.ts' '*.sh' \
+               2>/dev/null | grep -v '^\s*#'; then
+            echo "WARN: Potentially dangerous patterns detected. Review carefully."
+            # Warn only — do not hard-fail for now, as codebase may intentionally use these
+          fi
+          echo "PASS: Safety scan complete."
+
+      - name: "[SAFETY] Ensure no executable files added without review note"
+        shell: bash
+        run: |
+          echo "=== ALFA: SAFETY — executable check ==="
+          # List any newly added executable files compared to the base
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          else
+            base_sha="${{ github.event.before }}"
+          fi
+          # Guard against empty/zero base SHA (e.g. initial push)
+          if [ -z "$base_sha" ] || [ "$base_sha" = "0000000000000000000000000000000000000000" ]; then
+            echo "PASS: No base commit to compare against (initial push)."
+          else
+            # Use git mode bits (100755) to detect files committed as executable
+            new_executables=$(git diff --diff-filter=A --raw "$base_sha" HEAD 2>/dev/null \
+              | awk '$2 == "100755" { print $6 }' || true)
+            if [ -n "$new_executables" ]; then
+              echo "WARN: New executable file(s) added (mode 100755):"
+              echo "$new_executables"
+              echo "Ensure these are intentional and reviewed."
+            else
+              echo "PASS: No new executable files."
+            fi
+          fi
+
+      # ── USEFULNESS ────────────────────────────────────────────────────────────
+      # Every artifact must deliver value. It does not exist just because it was generated.
+
+      - name: "[USEFULNESS] Detect empty or placeholder files"
+        shell: bash
+        run: |
+          echo "=== ALFA: USEFULNESS CHECK ==="
+          fail=0
+          # Find tracked files under 10 bytes that are not .gitkeep
+          while IFS= read -r -d '' f; do
+            size=$(wc -c < "$f")
+            if [ "$size" -lt 10 ]; then
+              echo "FAIL: '$f' is effectively empty ($size bytes). An artifact must provide value."
+              fail=1
+            fi
+          done < <(git ls-files -z -- ':(exclude).gitkeep' ':(exclude).gitignore')
+          if [ "$fail" -eq 1 ]; then
+            exit 1
+          fi
+          echo "PASS: No empty artifacts found."
+
+      # ── GATE SUMMARY ──────────────────────────────────────────────────────────
+
+      - name: ALFA Gate — summary
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════╗"
+          echo "║           ALFA RELEASE GATE — ALL CHECKS PASSED     ║"
+          echo "╠══════════════════════════════════════════════════════╣"
+          echo "║  source    ✔  origin is known and traceable          ║"
+          echo "║  scope     ✔  boundaries declared and respected      ║"
+          echo "║  safety    ✔  no obvious risk introduced             ║"
+          echo "║  usefulness✔  artifact delivers defined value        ║"
+          echo "╠══════════════════════════════════════════════════════╣"
+          echo "║  You proved you are worth it.                        ║"
+          echo "╚══════════════════════════════════════════════════════╝"

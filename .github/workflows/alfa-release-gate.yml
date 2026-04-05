@@ -30,8 +30,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Audit dependencies (npm)
-        if: ${{ hashFiles('package-lock.json') != '' }}
-        run: npm audit --audit-level=high
+        if: ${{ hashFiles('package.json') != '' && hashFiles('package-lock.json') != '' }}
+        run: npm audit --package-lock-only --audit-level=high
 
       - name: Audit dependencies (pip)
         if: ${{ hashFiles('requirements.txt') != '' }}
@@ -78,7 +78,11 @@ jobs:
       - name: Run tests (Node.js)
         if: ${{ hashFiles('package.json') != '' }}
         run: |
-          npm ci
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            npm install
+          fi
           npm test
 
       - name: Run tests (Python)

@@ -1,5 +1,12 @@
 # VibeCoder Ops Bot
 
+> ⚠️ **WAŻNE / DISCLAIMER**
+>
+> Ten projekt **nie ma nic wspólnego z żadnym oryginałem**.  
+> Jest to w **100% niezależna, autorska wersja** stworzona od podstaw.  
+> Wszelkie podobieństwa do innych projektów są przypadkowe.  
+> Kod, architektura i koncepcja zostały napisane i zaprojektowane samodzielnie.
+
 ---
 
 ## ALFA Principle
